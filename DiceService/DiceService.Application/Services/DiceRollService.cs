@@ -1,7 +1,7 @@
 using DiceService.Application.DTOs;
-using DiceService.Application.Enums;
 using DiceService.Application.Interfaces;
-using DiceService.Application.QueryParams;
+using DiceService.Application.Models;
+using DiceService.Application.Requests;
 using DiceService.Domain.Entities;
 
 namespace DiceService.Application.Services;
@@ -12,7 +12,7 @@ public class DiceRollService(
 {
     private readonly IDiceRollRepository _diceRollRepository = diceRollRepository;
 
-    public async Task<DiceRollVM> RollDiceAsync()
+    public async Task<DiceRollVM> RollDiceAsync(CancellationToken cancellationToken = default)
     {
         var diceRoll = new DiceRoll
         {
@@ -22,7 +22,7 @@ public class DiceRollService(
             RolledAtUtc = DateTime.UtcNow,
         };
 
-        await this._diceRollRepository.AddAsync(diceRoll);
+        await this._diceRollRepository.AddAsync(diceRoll, cancellationToken);
 
         return new DiceRollVM
         {
@@ -34,53 +34,62 @@ public class DiceRollService(
         };
     }
 
-    public Task<IEnumerable<DiceRollVM>> GetDiceRollsAsync(DiceRollQueryParams queryParams)
+    public async Task<PagedResult<DiceRollVM>> GetDiceRollsAsync(
+        GetDiceRollsRequest request,
+        CancellationToken cancellationToken = default)
     {
-        var query = this._diceRollRepository.GetAll();
+        var hasFiltersOrSorting =
+            request.Year.HasValue ||
+            request.Month.HasValue ||
+            request.Day.HasValue ||
+            request.DateSortDirection.HasValue ||
+            request.SumSortDirection.HasValue;
 
-        // Filtering
-        if (queryParams.Year.HasValue)
-        {
-            query = query.Where(x => x.RolledAtUtc.Year == queryParams.Year);
-        }
+        int totalCount;
+        IReadOnlyList<DiceRoll> diceRolls;
 
-        if (queryParams.Month.HasValue)
+        if (!hasFiltersOrSorting)
         {
-            query = query.Where(x => x.RolledAtUtc.Month == queryParams.Month);
+            totalCount = await this._diceRollRepository.CountAsync(cancellationToken);
+            diceRolls = await this._diceRollRepository.GetAllAsync(
+                request.PageNumber,
+                request.PageSize,
+                cancellationToken);
         }
-
-        if (queryParams.Day.HasValue)
+        else
         {
-            query = query.Where(x => x.RolledAtUtc.Day == queryParams.Day);
-        }
-        
-        // Sorting
-        if (queryParams.DateSortDirection.HasValue)
-        {
-            if (query is IOrderedQueryable<DiceRoll> orderedQuery)
+            var filter = new DiceRollFilter
             {
-                query = queryParams.DateSortDirection == SortDirection.Desc
-                    ? orderedQuery.ThenByDescending(x => x.RolledAtUtc)
-                    : orderedQuery.ThenBy(x => x.RolledAtUtc);
-            }
-            else
-            {
-                query = queryParams.DateSortDirection == SortDirection.Desc
-                    ? query.OrderByDescending(x => x.RolledAtUtc)
-                    : query.OrderBy(x => x.RolledAtUtc);
-            }
+                Year = request.Year,
+                Month = request.Month,
+                Day = request.Day,
+                DateSortDirection = request.DateSortDirection,
+                SumSortDirection = request.SumSortDirection
+            };
+
+            totalCount = await this._diceRollRepository.CountByFilterAsync(filter, cancellationToken);
+            diceRolls = await this._diceRollRepository.GetByFilterAsync(
+                filter,
+                request.PageNumber,
+                request.PageSize,
+                cancellationToken);
         }
 
-        var diceRolls = query
-            .Select(x => new DiceRollVM
-            {
-                Id = x.Id,
-                FirstDice = x.FirstDice,
-                SecondDice = x.SecondDice,
-                Sum = x.Sum,
-                RolledAtUtc = x.RolledAtUtc,
-            }).ToList();
-
-        return Task.FromResult<IEnumerable<DiceRollVM>>(diceRolls);
+        return new PagedResult<DiceRollVM>
+        {
+            Items = diceRolls
+                .Select(x => new DiceRollVM
+                {
+                    Id = x.Id,
+                    FirstDice = x.FirstDice,
+                    SecondDice = x.SecondDice,
+                    Sum = x.Sum,
+                    RolledAtUtc = x.RolledAtUtc,
+                })
+                .ToList(),
+            PageNumber = request.PageNumber,
+            PageSize = request.PageSize,
+            TotalCount = totalCount
+        };
     }
 }

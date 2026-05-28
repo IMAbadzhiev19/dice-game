@@ -1,4 +1,5 @@
 using DiceService.Application.Interfaces;
+using DiceService.Application.Requests;
 using DiceService.Application.Services;
 using Microsoft.Extensions.DependencyInjection;
 
